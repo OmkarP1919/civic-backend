@@ -104,3 +104,11 @@ def health():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
+
+@app.route('/api/operator/location', methods=['POST'])
+def update_operator_location():
+    data = request.json
+    supabase.table("operators").update({
+        "current_location": f"POINT({data['lng']} {data['lat']})"
+    }).eq("user_id", data["user_id"]).execute()
+    return jsonify({"status": "updated"})
