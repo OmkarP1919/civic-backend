@@ -121,15 +121,32 @@ def health():
 
 @app.route('/api/issue/<issue_id>/resolve', methods=['POST'])
 def resolve_issue(issue_id):
-    """
-    Resolves an issue and grants 10 points to the reporter.
-    Expects: { "resolved_by": "operator-uuid" }
-    """
     data = request.json
     resolved_by = data.get("resolved_by")
 
     if not resolved_by:
-        return jsonify({"error": "resolved_by
+        return jsonify({"error": "resolved_by is required"}), 400
+
+    # Get reported_by
+    issue = supabase.table("issues").select("reported_by").eq("id", issue_id).execute()
+    if not issue.data:
+        return jsonify({"error": "Issue not found"}), 404
+
+    reported_by = issue.data[0]["reported_by"]
+
+    # Update issue
+    supabase.table("issues").update({
+        "status": "resolved",
+        "assigned_to": resolved_by
+    }).eq("id", issue_id).execute()
+
+    # Award 10 points via RPC
+    supabase.rpc("add_points_to_user", {
+        "target_user_id": reported_by,
+        "amount": 10
+    }).execute()
+
+    return jsonify({"status": "resolved", "points_awarded": 10}), 200
 
 # Production-ready entry (Render uses gunicorn)
 if __name__ == '__main__':
