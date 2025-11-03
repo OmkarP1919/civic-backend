@@ -119,6 +119,18 @@ def update_operator_location():
 def health():
     return jsonify({"status": "OK"})
 
+@app.route('/api/issue/<issue_id>/resolve', methods=['POST'])
+def resolve_issue(issue_id):
+    """
+    Resolves an issue and grants 10 points to the reporter.
+    Expects: { "resolved_by": "operator-uuid" }
+    """
+    data = request.json
+    resolved_by = data.get("resolved_by")
+
+    if not resolved_by:
+        return jsonify({"error": "resolved_by
+
 # Production-ready entry (Render uses gunicorn)
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
