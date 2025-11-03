@@ -7,15 +7,16 @@ import google.generativeai as genai
 import PIL.Image
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load environment variables (for local dev only)
 load_dotenv()
-url = os.getenv("SUPABASE_URL")
-key = os.getenv("SUPABASE_KEY")
-gemini_key = os.getenv("GEMINI_API_KEY")
 
-# Initialize clients
-supabase = create_client(url, key)
-genai.configure(api_key=gemini_key)
+# Supabase & Gemini config
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+genai.configure(api_key=GEMINI_API_KEY)
 
 app = Flask(__name__)
 CORS(app)
@@ -48,31 +49,35 @@ def classify_image_with_gemini(image_path):
 def create_issue():
     data = request.json
     file_url = data.get("file_url")
-    description = data.get("description", "")
-    reported_by = data.get("reported_by")
+    description = data.get("description")  # now REQUIRED
+    reported_by = data.get("reported_by")  # UUID from authenticated user
     lat = data.get("lat")
     lng = data.get("lng")
-    
+
+    if not description or not reported_by:
+        return jsonify({"error": "description and reported_by are required"}), 400
+
     auto_category = "other"
     auto_priority = "low"
 
     if file_url:
-        file_name = file_url.split("/")[-1]
-        if file_name.lower().endswith(('.jpg', '.jpeg', '.png')):
-            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as tmp_file:
-                local_path = tmp_file.name
+        try:
+            file_name = file_url.split("/")[-1]
+            if file_name.lower().endswith(('.jpg', '.jpeg', '.png')):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as tmp:
+                    local_path = tmp.name
 
-            try:
+                # Download from Supabase Storage
                 file_data = supabase.storage.from_("media").download(file_name)
                 with open(local_path, "wb") as f:
                     f.write(file_data)
+
                 auto_category = classify_image_with_gemini(local_path)
                 auto_priority = "high" if auto_category != "other" else "low"
-            except Exception as e:
-                print("Image processing error:", e)
-            finally:
-                if os.path.exists(local_path):
-                    os.remove(local_path)
+
+                os.remove(local_path)
+        except Exception as e:
+            print("Image processing error:", e)
 
     issue_data = {
         "description": description,
@@ -84,6 +89,7 @@ def create_issue():
         "file_url": file_url,
         "reported_by": reported_by
     }
+
     response = supabase.table("issues").insert(issue_data).execute()
     return jsonify(response.data[0]), 201
 
@@ -102,8 +108,11 @@ def update_operator_location():
     if not user_id or lat is None or lng is None:
         return jsonify({"error": "user_id, lat, and lng are required"}), 400
 
+    # Update using separate lat/lng columns (as per your new schema)
     supabase.table("operators").update({
-        "current_location": f"POINT({lng} {lat})"
+        "current_lat": lat,
+        "current_lng": lng,
+        "updated_at": "now()"
     }).eq("user_id", user_id).execute()
 
     return jsonify({"status": "location updated"}), 200
@@ -112,5 +121,7 @@ def update_operator_location():
 def health():
     return jsonify({"status": "OK"})
 
+# Production-ready run (for Render with Gunicorn)
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
