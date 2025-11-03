@@ -7,10 +7,10 @@ import google.generativeai as genai
 import PIL.Image
 from dotenv import load_dotenv
 
-# Load .env only in development
+# Load .env only for local development
 load_dotenv()
 
-# Initialize Supabase and Gemini
+# Initialize Supabase & Gemini
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -45,6 +45,7 @@ def classify_image_with_gemini(image_path):
         print("Gemini error:", e)
         return "other"
 
+# === Phase 1 & 2: Citizen Reports Issue ===
 @app.route('/api/issue', methods=['POST'])
 def create_issue():
     data = request.json
@@ -92,11 +93,13 @@ def create_issue():
     response = supabase.table("issues").insert(issue_data).execute()
     return jsonify(response.data[0]), 201
 
+# === Phase 1 & 3: Get All Issues ===
 @app.route('/api/issues', methods=['GET'])
 def get_issues():
     response = supabase.table("issues").select("*").execute()
     return jsonify(response.data)
 
+# === Phase 3: Operator Updates Location ===
 @app.route('/api/operator/location', methods=['POST'])
 def update_operator_location():
     data = request.json
@@ -115,24 +118,53 @@ def update_operator_location():
 
     return jsonify({"status": "location updated"}), 200
 
-@app.route('/health', methods=['GET'])
-def health():
-    return jsonify({"status": "OK"})
+# === Phase 4: Admin Verifies Issue ===
+@app.route('/api/issue/<issue_id>/verify', methods=['POST'])
+def verify_issue(issue_id):
+    supabase.table("issues").update({
+        "status": "verified"
+    }).eq("id", issue_id).execute()
+    return jsonify({"status": "verified"}), 200
 
+# === Phase 4: Admin Rejects Issue ===
+@app.route('/api/issue/<issue_id>/reject', methods=['POST'])
+def reject_issue(issue_id):
+    supabase.table("issues").update({
+        "status": "rejected"
+    }).eq("id", issue_id).execute()
+    return jsonify({"status": "rejected"}), 200
+
+# === Phase 4: Admin Assigns Issue to Operator ===
+@app.route('/api/issue/<issue_id>/assign', methods=['POST'])
+def assign_issue(issue_id):
+    data = request.json
+    assigned_to = data.get("assigned_to")  # UUID of operator
+
+    if not assigned_to:
+        return jsonify({"error": "assigned_to (operator UUID) is required"}), 400
+
+    supabase.table("issues").update({
+        "status": "assigned",
+        "assigned_to": assigned_to
+    }).eq("id", issue_id).execute()
+
+    return jsonify({"status": "assigned", "assigned_to": assigned_to}), 200
+
+# === Phase 4: Operator Resolves Issue & Awards Points ===
 @app.route('/api/issue/<issue_id>/resolve', methods=['POST'])
 def resolve_issue(issue_id):
     data = request.json
-    resolved_by = data.get("resolved_by")
+    resolved_by = data.get("resolved_by")  # operator UUID
 
     if not resolved_by:
         return jsonify({"error": "resolved_by is required"}), 400
 
-    # Get reported_by
-    issue = supabase.table("issues").select("reported_by").eq("id", issue_id).execute()
-    if not issue.data:
+    # Get reporter
+    issue_resp = supabase.table("issues").select("reported_by").eq("id", issue_id).execute()
+    if not issue_resp.data:
         return jsonify({"error": "Issue not found"}), 404
 
-    reported_by = issue.data[0]["reported_by"]
+    reported_by = issue_resp.data[0]["reported_by"]
 
     # Update issue
     supabase.table("issues").update({
@@ -140,7 +172,7 @@ def resolve_issue(issue_id):
         "assigned_to": resolved_by
     }).eq("id", issue_id).execute()
 
-    # Award 10 points via RPC
+    # Award 10 points via RPC (must exist in Supabase)
     supabase.rpc("add_points_to_user", {
         "target_user_id": reported_by,
         "amount": 10
@@ -148,7 +180,12 @@ def resolve_issue(issue_id):
 
     return jsonify({"status": "resolved", "points_awarded": 10}), 200
 
-# Production-ready entry (Render uses gunicorn)
+# === Health Check ===
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({"status": "OK"})
+
+# === Production Entry Point (Render) ===
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
