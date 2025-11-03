@@ -7,10 +7,10 @@ import google.generativeai as genai
 import PIL.Image
 from dotenv import load_dotenv
 
-# Load environment variables (for local dev only)
+# Load .env only in development
 load_dotenv()
 
-# Supabase & Gemini config
+# Initialize Supabase and Gemini
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -48,11 +48,11 @@ def classify_image_with_gemini(image_path):
 @app.route('/api/issue', methods=['POST'])
 def create_issue():
     data = request.json
-    file_url = data.get("file_url")
-    description = data.get("description")  # now REQUIRED
-    reported_by = data.get("reported_by")  # UUID from authenticated user
+    description = data.get("description")
+    reported_by = data.get("reported_by")
     lat = data.get("lat")
     lng = data.get("lng")
+    file_url = data.get("file_url")
 
     if not description or not reported_by:
         return jsonify({"error": "description and reported_by are required"}), 400
@@ -67,7 +67,6 @@ def create_issue():
                 with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as tmp:
                     local_path = tmp.name
 
-                # Download from Supabase Storage
                 file_data = supabase.storage.from_("media").download(file_name)
                 with open(local_path, "wb") as f:
                     f.write(file_data)
@@ -108,7 +107,6 @@ def update_operator_location():
     if not user_id or lat is None or lng is None:
         return jsonify({"error": "user_id, lat, and lng are required"}), 400
 
-    # Update using separate lat/lng columns (as per your new schema)
     supabase.table("operators").update({
         "current_lat": lat,
         "current_lng": lng,
@@ -121,7 +119,7 @@ def update_operator_location():
 def health():
     return jsonify({"status": "OK"})
 
-# Production-ready run (for Render with Gunicorn)
+# Production-ready entry (Render uses gunicorn)
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
