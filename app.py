@@ -5,8 +5,6 @@ import os
 import tempfile
 import google.generativeai as genai
 import PIL.Image
-import whisper
-import subprocess
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -21,11 +19,6 @@ genai.configure(api_key=gemini_key)
 
 app = Flask(__name__)
 CORS(app)
-
-def transcribe_audio(file_path):
-    model = whisper.load_model("small")
-    result = model.transcribe(file_path)
-    return result["text"].strip()
 
 def classify_image_with_gemini(image_path):
     try:
@@ -65,37 +58,26 @@ def create_issue():
 
     if file_url:
         file_name = file_url.split("/")[-1]
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as tmp_file:
-            local_path = tmp_file.name
+        # Only process known image types
+        if file_name.lower().endswith(('.jpg', '.jpeg', '.png')):
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as tmp_file:
+                local_path = tmp_file.name
 
-        try:
-            # Download file from Supabase
-            file_data = supabase.storage.from_("media").download(file_name)
-            with open(local_path, "wb") as f:
-                f.write(file_data)
+            try:
+                # Download file from Supabase
+                file_data = supabase.storage.from_("media").download(file_name)
+                with open(local_path, "wb") as f:
+                    f.write(file_data)
 
-            # Process based on type
-            if file_name.lower().endswith(('.mp3', '.wav', '.m4a', '.ogg')):
-                description = transcribe_audio(local_path) or description
-            elif file_name.lower().endswith(('.jpg', '.jpeg', '.png')):
+                # Classify image
                 auto_category = classify_image_with_gemini(local_path)
                 auto_priority = "high" if auto_category != "other" else "low"
-            elif file_name.lower().endswith(('.mp4', '.mov', '.avi')):
-                frame_path = local_path + "_frame.jpg"
-                # Extract first frame
-                subprocess.run([
-                    "ffmpeg", "-i", local_path, "-vframes", "1", "-y", frame_path
-                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                if os.path.exists(frame_path):
-                    auto_category = classify_image_with_gemini(frame_path)
-                    auto_priority = "high" if auto_category != "other" else "low"
-                    os.remove(frame_path)
 
-        except Exception as e:
-            print("Processing error:", e)
-        finally:
-            if os.path.exists(local_path):
-                os.remove(local_path)
+            except Exception as e:
+                print("Image processing error:", e)
+            finally:
+                if os.path.exists(local_path):
+                    os.remove(local_path)
 
     # Save to DB
     issue_data = {
