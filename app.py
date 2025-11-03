@@ -58,28 +58,22 @@ def create_issue():
 
     if file_url:
         file_name = file_url.split("/")[-1]
-        # Only process known image types
         if file_name.lower().endswith(('.jpg', '.jpeg', '.png')):
             with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as tmp_file:
                 local_path = tmp_file.name
 
             try:
-                # Download file from Supabase
                 file_data = supabase.storage.from_("media").download(file_name)
                 with open(local_path, "wb") as f:
                     f.write(file_data)
-
-                # Classify image
                 auto_category = classify_image_with_gemini(local_path)
                 auto_priority = "high" if auto_category != "other" else "low"
-
             except Exception as e:
                 print("Image processing error:", e)
             finally:
                 if os.path.exists(local_path):
                     os.remove(local_path)
 
-    # Save to DB
     issue_data = {
         "description": description,
         "lat": lat,
@@ -98,17 +92,25 @@ def get_issues():
     response = supabase.table("issues").select("*").execute()
     return jsonify(response.data)
 
+@app.route('/api/operator/location', methods=['POST'])
+def update_operator_location():
+    data = request.json
+    user_id = data.get("user_id")
+    lat = data.get("lat")
+    lng = data.get("lng")
+
+    if not user_id or lat is None or lng is None:
+        return jsonify({"error": "user_id, lat, and lng are required"}), 400
+
+    supabase.table("operators").update({
+        "current_location": f"POINT({lng} {lat})"
+    }).eq("user_id", user_id).execute()
+
+    return jsonify({"status": "location updated"}), 200
+
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({"status": "OK"})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
-
-@app.route('/api/operator/location', methods=['POST'])
-def update_operator_location():
-    data = request.json
-    supabase.table("operators").update({
-        "current_location": f"POINT({data['lng']} {data['lat']})"
-    }).eq("user_id", data["user_id"]).execute()
-    return jsonify({"status": "updated"})
